@@ -17,6 +17,9 @@ opentelemetry-research/
 ├── go.mod / go.sum     # Dependency Go
 ├── docker-compose.yml  # Layanan Prometheus, Grafana, dan Otel Collector
 ├── otel-collector-config.yaml # Konfigurasi OpenTelemetry Collector
+├── pkg/
+│   └── telemetry/
+│       └── telemetry.go # Inisiasi dari telemetry
 ├── prometheus/
 │   └── prometheus.yml # Konfigurasi Prometheus
 └── grafana/
