@@ -1,8 +1,4 @@
 apiVersion: 1
-deleteDatasources:
-  - name: 'Prometheus'
-    orgId: 1
-prune: true
 
 datasources:
   - name: Prometheus
@@ -10,4 +6,10 @@ datasources:
     access: proxy
     url: http://prometheus:9090
     isDefault: true
-    editable: false
+    editable: true
+
+  - name: Jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    editable: true

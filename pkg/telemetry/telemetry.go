@@ -9,115 +9,131 @@ package telemetry
 
 import (
 	"context"
+	"go.opentelemetry.io/otel/codes"
 	"log"
-	"math/rand"
-	"runtime"
 	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	otlpmetric "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	otlptrace "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var (
-	RequestCounter  metric.Int64Counter
-	RequestLatency  metric.Float64Histogram
-	RandomGauge     metric.Float64ObservableGauge
-	MemoryHeapGauge metric.Int64ObservableGauge
-	meterName       = "example.com/otel-prometheus"
+	tracer trace.Tracer
+	meter  metric.Meter
 )
 
-func Init(ctx context.Context) {
-	// OTLP Exporter
-	otlpExp, err := otlpmetricgrpc.New(ctx,
-		otlpmetricgrpc.WithEndpoint("localhost:4317"),
-		otlpmetricgrpc.WithInsecure(),
+// InitTelemetry initializes OpenTelemetry with trace and metric exporters
+func InitTelemetry(serviceName string, otelCollectorURL string) func() {
+	ctx := context.Background()
+
+	// Create a resource detailing service information
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
+			semconv.ServiceNameKey.String(serviceName),
+			semconv.ServiceVersionKey.String("1.0.0"),
+		),
 	)
 	if err != nil {
-		log.Fatalf("failed to create OTLP exporter: %v", err)
+		log.Fatalf("Failed to create resource: %v", err)
 	}
 
-	// Periodic Reader
-	reader := sdkmetric.NewPeriodicReader(otlpExp,
-		sdkmetric.WithInterval(5*time.Second),
-	)
-
-	// Meter Provider
-	mp := sdkmetric.NewMeterProvider(
-		sdkmetric.WithReader(reader),
-	)
-	otel.SetMeterProvider(mp)
-
-	// Meter
-	meter := mp.Meter(meterName)
-
-	// Counter
-	RequestCounter, err = meter.Int64Counter(
-		"http_requests_total",
-		metric.WithDescription("Total HTTP requests received"),
+	// ===== TRACES =====
+	// Create and configure trace exporter
+	traceExporter, err := otlptrace.New(ctx,
+		otlptrace.WithEndpoint(otelCollectorURL), // Pastikan port ini adalah port yang di-publish
+		otlptrace.WithInsecure(),
+		otlptrace.WithTimeout(30*time.Second),
 	)
 	if err != nil {
-		log.Fatalf("failed to create counter: %v", err)
+		log.Fatalf("Failed to create trace exporter: %v", err)
 	}
 
-	// Histogram
-	RequestLatency, err = meter.Float64Histogram(
-		"http_request_duration_seconds",
-		metric.WithDescription("HTTP request latency in seconds"),
-		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5),
+	// Create trace provider with exporter
+	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithResource(res),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithBatcher(traceExporter),
+	)
+	otel.SetTracerProvider(tracerProvider)
+
+	// Get a tracer
+	tracer = tracerProvider.Tracer(serviceName)
+
+	// ===== METRICS =====
+	// Create and configure metric exporter
+	metricExporter, err := otlpmetric.New(ctx,
+		otlpmetric.WithEndpoint(otelCollectorURL), // Pastikan port ini adalah port yang di-publish
+		otlpmetric.WithInsecure(),
+		otlpmetric.WithTimeout(30*time.Second),
 	)
 	if err != nil {
-		log.Fatalf("failed to create histogram: %v", err)
+		log.Fatalf("Failed to create metric exporter: %v", err)
 	}
 
-	// Gauge
-	RandomGauge, err = meter.Float64ObservableGauge(
-		"random_value",
-		metric.WithDescription("A random gauge value"),
+	// Create meter provider with exporter
+	meterProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithResource(res),
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter, sdkmetric.WithInterval(1*time.Second))),
 	)
-	if err != nil {
-		log.Fatalf("failed to create gauge: %v", err)
-	}
+	otel.SetMeterProvider(meterProvider)
 
-	MemoryHeapGauge, err = meter.Int64ObservableGauge(
-		"memory.heap",
-		metric.WithDescription("Penggunaan memori heap saat ini"),
-		metric.WithUnit("By"),
+	// Get a meter
+	meter = meterProvider.Meter(serviceName)
+
+	// Return cleanup function
+	return func() {
+		// Cleanup resources
+		if err := tracerProvider.Shutdown(ctx); err != nil {
+			log.Printf("Error shutting down tracer provider: %v", err)
+		}
+		if err := meterProvider.Shutdown(ctx); err != nil {
+			log.Printf("Error shutting down meter provider: %v", err)
+		}
+	}
+}
+
+// StartSpan starts a new span with the given name and returns the span with context
+func StartSpan(ctx context.Context, spanName string) (context.Context, trace.Span) {
+	return tracer.Start(ctx, spanName)
+}
+
+// AddSpanEvent adds an event to the current span
+func AddSpanEvent(span trace.Span, name string, attributes map[string]string) {
+	attrs := []attribute.KeyValue{}
+	for k, v := range attributes {
+		attrs = append(attrs, attribute.String(k, v))
+	}
+	span.AddEvent(name, trace.WithAttributes(attrs...))
+}
+
+// RecordSpanError records an error to the current span
+func RecordSpanError(span trace.Span, err error, message string) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, message)
+}
+
+// CreateCounter creates and returns a new counter
+func CreateCounter(name, description string, unit string) (metric.Int64Counter, error) {
+	return meter.Int64Counter(
+		name,
+		metric.WithDescription(description),
+		metric.WithUnit(unit),
 	)
-	if err != nil {
-		log.Fatalf("failed to create memory heap gauge: %v", err)
-	}
+}
 
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-	// Callback untuk RandomGauge
-	_, err = meter.RegisterCallback(func(ctx context.Context, obs metric.Observer) error {
-		obs.ObserveFloat64(
-			RandomGauge,
-			rng.Float64()*100,
-			metric.WithAttributes(attribute.String("unit", "random")),
-		)
-		return nil
-	}, RandomGauge)
-	if err != nil {
-		log.Fatalf("failed to register gauge callback: %v", err)
-	}
-
-	// Callback untuk MemoryHeapGauge
-	_, err = meter.RegisterCallback(func(ctx context.Context, obs metric.Observer) error {
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
-		obs.ObserveInt64(
-			MemoryHeapGauge,
-			int64(m.HeapAlloc),
-			metric.WithAttributes(attribute.String("unit", "bytes")),
-		)
-		return nil
-	}, MemoryHeapGauge)
-	if err != nil {
-		log.Fatalf("failed to register memory heap gauge callback: %v", err)
-	}
+// CreateHistogram creates and returns a new histogram
+func CreateHistogram(name, description string, unit string) (metric.Float64Histogram, error) {
+	return meter.Float64Histogram(
+		name,
+		metric.WithDescription(description),
+		metric.WithUnit(unit),
+	)
 }

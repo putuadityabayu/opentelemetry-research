@@ -1,35 +1,55 @@
 version: '3.8'
 
 services:
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus metrics exposition
+
+  # Jaeger
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "14250:14250"   # Jaeger model.proto
+      - "14268:14268"   # Jaeger HTTP thrift spans
+      - "14269:14269"   # Admin port
+
+  # Prometheus
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
     ports:
       - "9090:9090"
-    restart: unless-stopped
 
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib
-    container_name: otel-collector
-    volumes:
-      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
-    command: ["--config=/etc/otel-collector-config.yaml"]
-    ports:
-      - "4317:4317"   # OTLP gRPC receiver
-      - "4318:4318"   # OTLP HTTP receiver
-      - "8889:8889"   # Prometheus exporter endpoint
-    restart: unless-stopped
-
+  # Grafana
   grafana:
-    image: grafana/grafana
+    image: grafana/grafana:latest
     container_name: grafana
-    depends_on:
-      - prometheus
-      - otel-collector
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
     ports:
       - "3000:3000"
-    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - jaeger
