@@ -9,7 +9,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -70,13 +69,13 @@ func setupMetrics() error {
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	startTime := time.Now()
+	/*startTime := time.Now()
 
 	// Record the request
 	requestCounter.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("path", r.URL.Path),
 		attribute.String("method", r.Method),
-	))
+	))*/
 
 	// Create a span for this request
 	ctx, span := telemetry.StartSpan(ctx, "handle_request")
@@ -93,33 +92,38 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	if simulateError {
 		// Simulate error handling
-		err := errors.New("simulated internal server error")
+		err := CustomError{
+			Data: "Contoh data",
+			Name: "Ini Nama",
+			Code: 553240,
+		}
+		telemetry.AddSpanEvent(span, "error_data", err.ToMap())
 		telemetry.RecordSpanError(span, err, "Request processing failed")
 
 		// Record error metric
-		errorCounter.Add(ctx, 1, metric.WithAttributes(
+		/*errorCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("error_type", "internal_server_error"),
 			attribute.String("path", r.URL.Path),
-		))
+		))*/
 
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("Internal Server Error"))
 	} else {
 		// Simulate successful response
-		telemetry.AddSpanEvent(span, "request_processed", map[string]string{
+		/*telemetry.AddSpanEvent(span, "request_processed", map[string]string{
 			"status": "success",
-		})
+		})*/
 
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Request processed successfully"))
 	}
 
 	// Record request duration
-	duration := float64(time.Since(startTime).Milliseconds())
-	requestDuration.Record(ctx, duration, metric.WithAttributes(
+	//duration := float64(time.Since(startTime).Milliseconds())
+	/*requestDuration.Record(ctx, duration, metric.WithAttributes(
 		attribute.String("path", r.URL.Path),
 		attribute.String("status", fmt.Sprintf("%d", w.Header().Get("Status"))),
-	))
+	))*/
 }
 
 func main() {
@@ -128,9 +132,9 @@ func main() {
 	defer cleanup()
 
 	// Setup metrics
-	if err := setupMetrics(); err != nil {
+	/*if err := setupMetrics(); err != nil {
 		log.Fatalf("Failed to setup metrics: %v", err)
-	}
+	}*/
 
 	// Create HTTP handler with OpenTelemetry instrumentation
 	handler := otelhttp.NewHandler(http.HandlerFunc(handleRequest), "server")
@@ -168,4 +172,22 @@ func main() {
 		log.Fatalf("Server shutdown failed: %v", err)
 	}
 	log.Println("Server gracefully stopped")
+}
+
+type CustomError struct {
+	Data any
+	Code int
+	Name string
+}
+
+func (c CustomError) Error() string {
+	return fmt.Sprintf("Name: %s, Code: %d, Data: %v", c.Name, c.Code, c.Data)
+}
+
+func (c CustomError) ToMap() map[string]string {
+	return map[string]string{
+		"name": c.Name,
+		"code": fmt.Sprintf("%d", c.Code),
+		"data": fmt.Sprintf("%v", c.Data),
+	}
 }

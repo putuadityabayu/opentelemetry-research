@@ -15,10 +15,8 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	otlpmetric "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	otlptrace "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/metric"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
@@ -69,7 +67,7 @@ func InitTelemetry(serviceName string, otelCollectorURL string) func() {
 
 	// ===== METRICS =====
 	// Create and configure metric exporter
-	metricExporter, err := otlpmetric.New(ctx,
+	/*metricExporter, err := otlpmetric.New(ctx,
 		otlpmetric.WithEndpoint(otelCollectorURL), // Pastikan port ini adalah port yang di-publish
 		otlpmetric.WithInsecure(),
 		otlpmetric.WithTimeout(30*time.Second),
@@ -86,7 +84,7 @@ func InitTelemetry(serviceName string, otelCollectorURL string) func() {
 	otel.SetMeterProvider(meterProvider)
 
 	// Get a meter
-	meter = meterProvider.Meter(serviceName)
+	meter = meterProvider.Meter(serviceName)*/
 
 	// Return cleanup function
 	return func() {
@@ -94,9 +92,9 @@ func InitTelemetry(serviceName string, otelCollectorURL string) func() {
 		if err := tracerProvider.Shutdown(ctx); err != nil {
 			log.Printf("Error shutting down tracer provider: %v", err)
 		}
-		if err := meterProvider.Shutdown(ctx); err != nil {
+		/*if err := meterProvider.Shutdown(ctx); err != nil {
 			log.Printf("Error shutting down meter provider: %v", err)
-		}
+		}*/
 	}
 }
 
