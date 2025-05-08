@@ -54,10 +54,12 @@ func InitTelemetry(serviceName string, otelCollectorURL string) func() {
 		log.Fatalf("Failed to create trace exporter: %v", err)
 	}
 
+	wrappedExporter := &errorOnlyExporter{base: traceExporter}
 	// Create trace provider with exporter
 	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(wrappedExporter),
 		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		//sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithBatcher(traceExporter),
 	)
 	otel.SetTracerProvider(tracerProvider)
@@ -99,17 +101,14 @@ func InitTelemetry(serviceName string, otelCollectorURL string) func() {
 }
 
 // StartSpan starts a new span with the given name and returns the span with context
-func StartSpan(ctx context.Context, spanName string) (context.Context, trace.Span) {
-	return tracer.Start(ctx, spanName)
+func StartSpan(ctx context.Context, spanName string) (context.Context, *Span) {
+	ctx, span := tracer.Start(ctx, spanName)
+	return ctx, &Span{span}
 }
 
 // AddSpanEvent adds an event to the current span
-func AddSpanEvent(span trace.Span, name string, attributes map[string]string) {
-	attrs := []attribute.KeyValue{}
-	for k, v := range attributes {
-		attrs = append(attrs, attribute.String(k, v))
-	}
-	span.AddEvent(name, trace.WithAttributes(attrs...))
+func AddSpanEvent(span trace.Span, name string, attributes []attribute.KeyValue) {
+	span.AddEvent(name, trace.WithAttributes(attributes...))
 }
 
 // RecordSpanError records an error to the current span
@@ -134,4 +133,81 @@ func CreateHistogram(name, description string, unit string) (metric.Float64Histo
 		metric.WithDescription(description),
 		metric.WithUnit(unit),
 	)
+}
+
+// Span helper for span
+type Span struct {
+	trace.Span
+}
+
+// AddEventHelper helper for add event
+func (s *Span) AddEventHelper(name string, attributes map[string]any) {
+	var attrs []attribute.KeyValue
+
+	for k, v := range attributes {
+		switch val := v.(type) {
+		case string:
+			attrs = append(attrs, attribute.String(k, val))
+		case int:
+			attrs = append(attrs, attribute.Int(k, val))
+		case int64:
+			attrs = append(attrs, attribute.Int64(k, val))
+		case float64:
+			attrs = append(attrs, attribute.Float64(k, val))
+		case bool:
+			attrs = append(attrs, attribute.Bool(k, val))
+		case []string:
+			attrs = append(attrs, attribute.StringSlice(k, val))
+		case []int:
+			attrs = append(attrs, attribute.IntSlice(k, val))
+		case []int64:
+			attrs = append(attrs, attribute.Int64Slice(k, val))
+		case []float64:
+			attrs = append(attrs, attribute.Float64Slice(k, val))
+		case []bool:
+			attrs = append(attrs, attribute.BoolSlice(k, val))
+		}
+	}
+
+	s.AddEvent(name, trace.WithAttributes(attrs...))
+}
+
+// RecordErrorHelper helper for record error
+func (s *Span) RecordErrorHelper(err error, message string) {
+	s.RecordError(err)
+	s.SetStatus(codes.Error, message)
+}
+
+type SpanIdentifier struct {
+	TraceID string
+	SpanID  string
+}
+
+func (s *Span) GetID() (traceId, spanId string) {
+	sc := s.SpanContext()
+
+	return sc.TraceID().String(), sc.SpanID().String()
+}
+
+type errorOnlyExporter struct {
+	base sdktrace.SpanExporter
+}
+
+// ExportSpans implement ExportSpans
+func (e *errorOnlyExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	var filtered []sdktrace.ReadOnlySpan
+	for _, s := range spans {
+		if s.Status().Code == codes.Error {
+			filtered = append(filtered, s)
+		}
+	}
+	if len(filtered) > 0 {
+		return e.base.ExportSpans(ctx, filtered)
+	}
+	return nil
+}
+
+// Shutdown implement Shutdown
+func (e *errorOnlyExporter) Shutdown(ctx context.Context) error {
+	return e.base.Shutdown(ctx)
 }

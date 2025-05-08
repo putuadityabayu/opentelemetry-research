@@ -19,11 +19,17 @@ services:
     container_name: jaeger
     environment:
       - COLLECTOR_OTLP_ENABLED=true
+#      - BADGER_EPHEMERAL=false
+#      - BADGER_DIRECTORY_VALUE/badger/data
+#      - BADGER_DIRECTORY_KEY=/badger/key
+#      - SPAN_STORAGE_TYPE=badger
     ports:
       - "16686:16686"   # Jaeger UI
       - "14250:14250"   # Jaeger model.proto
       - "14268:14268"   # Jaeger HTTP thrift spans
       - "14269:14269"   # Admin port
+#    volumes:
+#      - ./jaeger/badger:/badger
 
   # Prometheus
   prometheus:

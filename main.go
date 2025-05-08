@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"log"
 	"math/rand"
 	"net/http"
@@ -20,7 +21,6 @@ import (
 
 	"opentelemetry-research/pkg/telemetry"
 
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -76,9 +76,12 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		attribute.String("path", r.URL.Path),
 		attribute.String("method", r.Method),
 	))*/
-
 	// Create a span for this request
-	ctx, span := telemetry.StartSpan(ctx, "handle_request")
+	path := r.URL.Path
+	if path == "/" {
+		path = "index"
+	}
+	ctx, span := telemetry.StartSpan(ctx, path)
 	defer span.End()
 
 	// Add span attributes
@@ -88,7 +91,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Simulate randomized response (success or error)
-	simulateError := rand.Intn(100) < 30 // 30% chance of error
+	simulateError := rand.Intn(100) < 80 // 30% chance of error
 
 	if simulateError {
 		// Simulate error handling
@@ -97,9 +100,14 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			Name: "Ini Nama",
 			Code: 553240,
 		}
-		telemetry.AddSpanEvent(span, "error_data", err.ToMap())
-		telemetry.RecordSpanError(span, err, "Request processing failed")
-
+		span.AddEventHelper("error_data", map[string]any{
+			"name": err.Name,
+			"code": err.Code,
+			"data": err.Data,
+		})
+		span.RecordErrorHelper(err, "Request processing failed")
+		traceId, spanId := span.GetID()
+		fmt.Printf("TraceID: %s, SpanID: %s\n", traceId, spanId)
 		// Record error metric
 		/*errorCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("error_type", "internal_server_error"),
@@ -139,6 +147,8 @@ func main() {
 	// Create HTTP handler with OpenTelemetry instrumentation
 	handler := otelhttp.NewHandler(http.HandlerFunc(handleRequest), "server")
 	http.Handle("/", handler)
+	http.Handle("/user", handler)
+	http.Handle("/product", handler)
 
 	// Start server
 	port := os.Getenv("PORT")
@@ -175,7 +185,7 @@ func main() {
 }
 
 type CustomError struct {
-	Data any
+	Data string
 	Code int
 	Name string
 }

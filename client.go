@@ -10,17 +10,29 @@ package main
 import (
 	"flag"
 	"log"
+	"math/rand"
 	"net/http"
+	"net/url"
 	"time"
 )
 
+func getRandomPath() string {
+	paths := []string{
+		"/",
+		"/user",
+		"/product",
+	}
+	rand.Seed(time.Now().UnixNano())
+	return paths[rand.Intn(len(paths))]
+}
+
 func main() {
 	var n int
-	var url string
+	var link string
 	var delay time.Duration
 
-	flag.IntVar(&n, "n", 10, "number of requests to send")
-	flag.StringVar(&url, "url", "http://localhost:8080/", "target URL to hit")
+	flag.IntVar(&n, "n", 20, "number of requests to send")
+	flag.StringVar(&link, "url", "http://localhost:8080", "target URL to hit")
 	flag.DurationVar(&delay, "delay", 100*time.Millisecond, "delay between requests")
 	flag.Parse()
 
@@ -28,7 +40,9 @@ func main() {
 
 	for i := 1; i <= n; i++ {
 		start := time.Now()
-		resp, err := client.Get(url)
+		u, _ := url.Parse(link)
+		u.Path = getRandomPath()
+		resp, err := client.Get(u.String())
 		duration := time.Since(start)
 		if err != nil {
 			log.Printf("[%d] error: %v", i, err)
