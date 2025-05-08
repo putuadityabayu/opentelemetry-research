@@ -1,4 +1,6 @@
 build/
 .idea/*
 !.idea/copyright
+service-account.json
+.env
 /jaeger/badger/**/*

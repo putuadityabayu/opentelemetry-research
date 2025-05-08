@@ -9,8 +9,15 @@ package telemetry
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	texporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
 	"go.opentelemetry.io/otel/codes"
+	"google.golang.org/api/option"
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -100,6 +107,60 @@ func InitTelemetry(serviceName string, otelCollectorURL string) func() {
 	}
 }
 
+func GcpTelemetry(serviceName string) func() {
+	gcpJson, gcpMap, err := getServiceAccountKey()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ctx := context.Background()
+
+	// Create a resource detailing service information
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
+			semconv.ServiceNameKey.String(serviceName),
+			semconv.ServiceVersionKey.String("1.0.0"),
+		),
+	)
+	if err != nil {
+		log.Fatalf("Failed to create resource: %v", err)
+	}
+
+	// ===== TRACES =====
+	// Create and configure trace exporter
+	traceExporter, err := texporter.New(texporter.WithProjectID(gcpMap["project_id"]), texporter.WithTraceClientOptions([]option.ClientOption{option.WithCredentialsJSON(gcpJson)}))
+	if err != nil {
+		log.Fatalf("Failed to create trace exporter: %v", err)
+	}
+
+	bsp := sdktrace.NewBatchSpanProcessor(traceExporter)
+	filter := &filteringSpanProcessor{wrapped: bsp}
+
+	wrappedExporter := &errorOnlyExporter{base: traceExporter}
+	// Create trace provider with exporter
+	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithSpanProcessor(filter),
+		sdktrace.WithBatcher(wrappedExporter),
+		sdktrace.WithResource(res),
+		//sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithBatcher(traceExporter),
+	)
+	otel.SetTracerProvider(tracerProvider)
+
+	// Get a tracer
+	tracer = tracerProvider.Tracer(serviceName)
+
+	return func() {
+		// Cleanup resources
+		if err := tracerProvider.Shutdown(ctx); err != nil {
+			log.Printf("Error shutting down tracer provider: %v", err)
+		}
+		/*if err := meterProvider.Shutdown(ctx); err != nil {
+			log.Printf("Error shutting down meter provider: %v", err)
+		}*/
+	}
+}
+
 // StartSpan starts a new span with the given name and returns the span with context
 func StartSpan(ctx context.Context, spanName string) (context.Context, *Span) {
 	ctx, span := tracer.Start(ctx, spanName)
@@ -174,7 +235,7 @@ func (s *Span) AddEventHelper(name string, attributes map[string]any) {
 
 // RecordErrorHelper helper for record error
 func (s *Span) RecordErrorHelper(err error, message string) {
-	s.RecordError(err)
+	s.RecordError(err, trace.WithStackTrace(true))
 	s.SetStatus(codes.Error, message)
 }
 
@@ -210,4 +271,52 @@ func (e *errorOnlyExporter) ExportSpans(ctx context.Context, spans []sdktrace.Re
 // Shutdown implement Shutdown
 func (e *errorOnlyExporter) Shutdown(ctx context.Context) error {
 	return e.base.Shutdown(ctx)
+}
+
+type filteringSpanProcessor struct {
+	wrapped sdktrace.SpanProcessor
+}
+
+func (f *filteringSpanProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
+	name := s.Name()
+	if strings.HasPrefix(name, "google.devtools.cloudtrace.v2.") {
+		// abaikan span yang berasal dari pengiriman trace itu sendiri
+		return
+	}
+	// skip non error
+	if s.Status().Code != codes.Error {
+		return
+	}
+	f.wrapped.OnEnd(s)
+}
+
+func (f *filteringSpanProcessor) OnStart(ctx context.Context, s sdktrace.ReadWriteSpan) {
+	f.wrapped.OnStart(ctx, s)
+}
+
+func (f *filteringSpanProcessor) Shutdown(ctx context.Context) error {
+	return f.wrapped.Shutdown(ctx)
+}
+
+func (f *filteringSpanProcessor) ForceFlush(ctx context.Context) error {
+	return f.wrapped.ForceFlush(ctx)
+}
+
+func getServiceAccountKey() ([]byte, map[string]string, error) {
+	fireBaseAuthKey := os.Getenv("GCP_SERVICE_ACCOUNT")
+	if fireBaseAuthKey == "" {
+		return nil, nil, fmt.Errorf("GCP_PROJECT_ID is not set")
+	}
+
+	decodedKey, err := base64.StdEncoding.DecodeString(fireBaseAuthKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var data map[string]string
+	if err = json.Unmarshal(decodedKey, &data); err != nil {
+		return nil, nil, err
+	}
+
+	return decodedKey, data, nil
 }

@@ -9,7 +9,10 @@ package main
 
 import (
 	"context"
+	"errors"
+	"github.com/subosito/gotenv"
 	"log"
+	"opentelemetry-research/pkg/telemetry"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -19,11 +22,13 @@ import (
 	texporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
 )
 
-func mainGcp() {
+func main() {
+	_ = gotenv.Load()
+
 	ctx := context.Background()
 
 	// Inisialisasi exporter untuk Google Cloud Trace
-	exporter, err := texporter.New(texporter.WithProjectID("YOUR_PROJECT_ID"))
+	exporter, err := texporter.New(texporter.WithProjectID("xentra-dummy-trial-01"))
 	if err != nil {
 		log.Fatalf("Gagal membuat exporter: %v", err)
 	}
@@ -42,19 +47,24 @@ func mainGcp() {
 	otel.SetTracerProvider(tp)
 
 	// Buat tracer
-	tracer := otel.Tracer("example.com/trace")
+	tracer := otel.Tracer("xentra-dummy")
 
 	// Mulai span
-	ctx, span := tracer.Start(ctx, "main-span")
+	ctx, span := tracer.Start(ctx, "span-span-contoh")
 	defer span.End()
 
 	// Tambahkan atribut ke span
 	span.SetAttributes(
 		attribute.String("example.attribute", "value"),
+		attribute.String("example.attribute2", "value"),
+		attribute.String("example.attribute3", "value"),
 	)
 
 	// Simulasi pekerjaan
 	time.Sleep(2 * time.Second)
+
+	err = errors.New("contoh error")
+	telemetry.RecordSpanError(span, err, "Faileddddd")
 
 	log.Println("Tracing selesai.")
 }

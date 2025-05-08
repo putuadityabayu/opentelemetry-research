@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/subosito/gotenv"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"log"
 	"math/rand"
@@ -135,8 +136,10 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	_ = gotenv.Load()
 	// Initialize telemetry - using localhost for collector URL
-	cleanup := telemetry.InitTelemetry("demo-api-service", "localhost:4317")
+	//cleanup := telemetry.InitTelemetry("demo-api-service", "localhost:4317")
+	cleanup := telemetry.GcpTelemetry("demo-api-service")
 	defer cleanup()
 
 	// Setup metrics
